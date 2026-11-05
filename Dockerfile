@@ -1,6 +1,6 @@
 # Multi-stage Dockerfile for uet-cloud-test
 # Stage 1: Build
-FROM golang:1.23-alpine AS builder
+FROM golang:alpine AS builder
 
 WORKDIR /app
 COPY go.mod ./
@@ -11,7 +11,7 @@ COPY static/ ./static/
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o uet-cloud-test main.go
 
 # Stage 2: Runtime
-FROM alpine:3.20
+FROM alpine
 
 RUN apk --no-cache add ca-certificates tzdata
 
