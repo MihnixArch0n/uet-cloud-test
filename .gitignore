@@ -1,0 +1,9 @@
+# Binaries
+/uet-cloud-test
+*.exe
+*.test
+
+# OS / Editor
+.DS_Store
+.idea/
+.vscode/
