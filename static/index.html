@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UET Cloud - Container Load Tester</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card-bg: #1e293b;
+      --card-border: #334155;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --primary: #38bdf8;
+      --primary-hover: #0284c7;
+      --danger: #ef4444;
+      --danger-hover: #dc2626;
+      --success: #22c55e;
+      --warning: #f59e0b;
+      --font: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: var(--font);
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2rem 1rem;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 800px;
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 1rem;
+      padding-bottom: 0.5rem;
+      border-bottom: 1px solid var(--card-border);
+    }
+
+    .title-group h1 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: var(--primary);
+    }
+
+    .title-group p {
+      font-size: 0.875rem;
+      color: var(--text-muted);
+      margin-top: 0.25rem;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.375rem;
+      padding: 0.25rem 0.75rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .badge-idle {
+      background-color: #334155;
+      color: #94a3b8;
+    }
+
+    .badge-active {
+      background-color: rgba(34, 197, 94, 0.15);
+      color: var(--success);
+      border: 1px solid rgba(34, 197, 94, 0.3);
+    }
+
+    .card {
+      background-color: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 0.75rem;
+      padding: 1.5rem;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2);
+    }
+
+    .card-title {
+      font-size: 1.125rem;
+      font-weight: 600;
+      margin-bottom: 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    /* Metrics Grid */
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1rem;
+    }
+
+    .metric-box {
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid var(--card-border);
+      border-radius: 0.5rem;
+      padding: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+
+    .metric-label {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .metric-value {
+      font-size: 1.75rem;
+      font-weight: 700;
+      color: #fff;
+    }
+
+    .metric-sub {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+
+    /* Controls */
+    .control-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .control-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .control-label {
+      font-weight: 600;
+      font-size: 0.95rem;
+    }
+
+    .control-display {
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: var(--primary);
+    }
+
+    .slider-row {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    input[type="range"] {
+      flex: 1;
+      height: 8px;
+      border-radius: 4px;
+      background: #334155;
+      outline: none;
+      accent-color: var(--primary);
+      cursor: pointer;
+    }
+
+    .number-input {
+      width: 90px;
+      padding: 0.4rem 0.5rem;
+      background: #0f172a;
+      border: 1px solid var(--card-border);
+      border-radius: 0.375rem;
+      color: #fff;
+      font-size: 0.875rem;
+      text-align: right;
+    }
+
+    .presets {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    .preset-btn {
+      background: #334155;
+      color: var(--text-muted);
+      border: none;
+      padding: 0.25rem 0.6rem;
+      border-radius: 0.25rem;
+      font-size: 0.75rem;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .preset-btn:hover {
+      background: #475569;
+      color: #fff;
+    }
+
+    /* Duration options */
+    .duration-options {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+      margin-top: 0.25rem;
+    }
+
+    .duration-btn {
+      background: #0f172a;
+      border: 1px solid var(--card-border);
+      color: var(--text-muted);
+      padding: 0.4rem 0.75rem;
+      border-radius: 0.375rem;
+      font-size: 0.8rem;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .duration-btn.active {
+      background: rgba(56, 189, 248, 0.15);
+      border-color: var(--primary);
+      color: var(--primary);
+      font-weight: 600;
+    }
+
+    /* Actions */
+    .actions {
+      display: flex;
+      gap: 1rem;
+      margin-top: 1rem;
+    }
+
+    .btn {
+      flex: 1;
+      padding: 0.85rem 1.25rem;
+      border: none;
+      border-radius: 0.5rem;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 0.5rem;
+      transition: all 0.2s;
+    }
+
+    .btn-primary {
+      background: var(--primary);
+      color: #0f172a;
+    }
+
+    .btn-primary:hover {
+      background: var(--primary-hover);
+    }
+
+    .btn-danger {
+      background: var(--danger);
+      color: #fff;
+    }
+
+    .btn-danger:hover {
+      background: var(--danger-hover);
+    }
+
+    /* Footer info */
+    footer {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      text-align: center;
+      margin-top: 1rem;
+    }
+
+    .toast {
+      position: fixed;
+      bottom: 2rem;
+      right: 2rem;
+      background: #1e293b;
+      border: 1px solid var(--card-border);
+      padding: 0.75rem 1.25rem;
+      border-radius: 0.5rem;
+      font-size: 0.875rem;
+      box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+      display: none;
+      animation: fadeIn 0.3s;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="title-group">
+        <h1>UET Cloud - Load Tester</h1>
+        <p id="cgroupInfo">Đang nhận diện tài nguyên container...</p>
+      </div>
+      <div>
+        <span id="statusBadge" class="badge badge-idle">● Idle</span>
+      </div>
+    </header>
+
+    <!-- Metrics Card -->
+    <div class="card">
+      <div class="card-title">
+        <span>Chỉ số thời gian thực (Live Metrics)</span>
+        <span id="timerBadge" style="font-size: 0.8rem; font-weight: 400; color: var(--text-muted);">Timer: Tắt</span>
+      </div>
+      <div class="metrics-grid">
+        <div class="metric-box">
+          <span class="metric-label">CPU Sử dụng</span>
+          <span id="metricCpu" class="metric-value">0.0%</span>
+          <span id="metricCpuSub" class="metric-sub">Đang tính theo quota...</span>
+        </div>
+        <div class="metric-box">
+          <span class="metric-label">RAM Sử dụng (RSS)</span>
+          <span id="metricMem" class="metric-value">0.0 MB</span>
+          <span id="metricMemSub" class="metric-sub">0% của container limit</span>
+        </div>
+        <div class="metric-box">
+          <span class="metric-label">Giới hạn Cgroup</span>
+          <span id="metricLimit" class="metric-value">--</span>
+          <span id="metricLimitSub" class="metric-sub">Cgroup v2</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Control Card -->
+    <div class="card">
+      <div class="card-title">Điều khiển Tải (Load Controller)</div>
+
+      <!-- CPU Control -->
+      <div class="control-group">
+        <div class="control-header">
+          <label class="control-label" for="cpuSlider">Tải CPU (%)</label>
+          <span id="cpuDisplay" class="control-display">0% (~0.00 vCPU)</span>
+        </div>
+        <div class="slider-row">
+          <input type="range" id="cpuSlider" min="0" max="100" step="1" value="0">
+          <input type="number" id="cpuInput" class="number-input" min="0" max="100" step="1" value="0">
+          <span style="font-size: 0.85rem; color: var(--text-muted);">%</span>
+        </div>
+        <div class="presets">
+          <button class="preset-btn" onclick="setCpuPreset(0)">0%</button>
+          <button class="preset-btn" onclick="setCpuPreset(25)">25%</button>
+          <button class="preset-btn" onclick="setCpuPreset(50)">50%</button>
+          <button class="preset-btn" onclick="setCpuPreset(75)">75%</button>
+          <button class="preset-btn" onclick="setCpuPreset(90)">90%</button>
+          <button class="preset-btn" onclick="setCpuPreset(100)">100%</button>
+        </div>
+      </div>
+
+      <!-- Memory Control -->
+      <div class="control-group">
+        <div class="control-header">
+          <label class="control-label" for="memSlider">Tải Memory / RAM (%)</label>
+          <span id="memDisplay" class="control-display">0% (~0 MB)</span>
+        </div>
+        <div class="slider-row">
+          <input type="range" id="memSlider" min="0" max="100" step="1" value="0">
+          <input type="number" id="memInput" class="number-input" min="0" max="100" step="1" value="0">
+          <span style="font-size: 0.85rem; color: var(--text-muted);">%</span>
+        </div>
+        <div class="presets">
+          <button class="preset-btn" onclick="setMemPreset(0)">0%</button>
+          <button class="preset-btn" onclick="setMemPreset(25)">25%</button>
+          <button class="preset-btn" onclick="setMemPreset(50)">50%</button>
+          <button class="preset-btn" onclick="setMemPreset(70)">70%</button>
+          <button class="preset-btn" onclick="setMemPreset(85)">85%</button>
+        </div>
+      </div>
+
+      <!-- Duration Selection -->
+      <div class="control-group">
+        <label class="control-label">Thời gian duy trì tải (Auto-stop Timer)</label>
+        <div class="duration-options">
+          <button class="duration-btn active" data-sec="0" onclick="setDuration(0, this)">Liên tục (Manual)</button>
+          <button class="duration-btn" data-sec="30" onclick="setDuration(30, this)">30 giây</button>
+          <button class="duration-btn" data-sec="60" onclick="setDuration(60, this)">1 phút</button>
+          <button class="duration-btn" data-sec="180" onclick="setDuration(180, this)">3 phút</button>
+          <button class="duration-btn" data-sec="300" onclick="setDuration(300, this)">5 phút</button>
+        </div>
+      </div>
+
+      <!-- Actions -->
+      <div class="actions">
+        <button id="btnStart" class="btn btn-primary" onclick="applyLoad()">
+          <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20"><path d="M4 4l12 6-12 6V4z"/></svg>
+          Áp dụng Tải
+        </button>
+        <button id="btnStop" class="btn btn-danger" onclick="stopLoad()">
+          <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 001 1h4a1 1 0 001-1V8a1 1 0 00-1-1H8z" clip-rule="evenodd"/></svg>
+          Dừng & Giải phóng RAM
+        </button>
+      </div>
+    </div>
+
+    <footer>
+      UET Cloud • Container Performance Load Engine • Tương thích Azure Container Apps (ACA)
+    </footer>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script>
+    let containerCpuLimit = 1.0;
+    let containerMemBytes = 1024 * 1024 * 1024;
+    let selectedDuration = 0;
+
+    const cpuSlider = document.getElementById('cpuSlider');
+    const cpuInput = document.getElementById('cpuInput');
+    const cpuDisplay = document.getElementById('cpuDisplay');
+
+    const memSlider = document.getElementById('memSlider');
+    const memInput = document.getElementById('memInput');
+    const memDisplay = document.getElementById('memDisplay');
+
+    function updateCpuUI(pct) {
+      pct = Math.min(100, Math.max(0, parseInt(pct) || 0));
+      cpuSlider.value = pct;
+      cpuInput.value = pct;
+      const vcpu = (containerCpuLimit * (pct / 100.0)).toFixed(2);
+      cpuDisplay.textContent = `${pct}% (~${vcpu} vCPU)`;
+    }
+
+    function updateMemUI(pct) {
+      pct = Math.min(100, Math.max(0, parseInt(pct) || 0));
+      memSlider.value = pct;
+      memInput.value = pct;
+      const mb = Math.round((containerMemBytes / (1024 * 1024)) * (pct / 100.0));
+      memDisplay.textContent = `${pct}% (~${mb} MB)`;
+    }
+
+    cpuSlider.addEventListener('input', (e) => updateCpuUI(e.target.value));
+    cpuInput.addEventListener('input', (e) => updateCpuUI(e.target.value));
+
+    memSlider.addEventListener('input', (e) => updateMemUI(e.target.value));
+    memInput.addEventListener('input', (e) => updateMemUI(e.target.value));
+
+    function setCpuPreset(val) { updateCpuUI(val); }
+    function setMemPreset(val) { updateMemUI(val); }
+
+    function setDuration(sec, btn) {
+      selectedDuration = sec;
+      document.querySelectorAll('.duration-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    }
+
+    function showToast(msg, isError = false) {
+      const toast = document.getElementById('toast');
+      toast.textContent = msg;
+      toast.style.borderColor = isError ? 'var(--danger)' : 'var(--primary)';
+      toast.style.display = 'block';
+      setTimeout(() => { toast.style.display = 'none'; }, 3000);
+    }
+
+    async function fetchStatus() {
+      try {
+        const res = await fetch('/api/status');
+        if (!res.ok) return;
+        const data = await res.json();
+
+        // Update limits once detected
+        containerCpuLimit = data.limits.cpu_limit;
+        containerMemBytes = data.limits.memory_limit_bytes;
+
+        const memLimitMB = Math.round(containerMemBytes / (1024 * 1024));
+        document.getElementById('cgroupInfo').textContent = 
+          `Cgroup: ${data.limits.cgroup_version.toUpperCase()} | Giới hạn: ${containerCpuLimit.toFixed(2)} vCPU, ${memLimitMB} MB RAM`;
+
+        // Update status badge
+        const badge = document.getElementById('statusBadge');
+        if (data.is_active) {
+          badge.className = 'badge badge-active';
+          badge.textContent = '● Đang chạy tải';
+        } else {
+          badge.className = 'badge badge-idle';
+          badge.textContent = '● Idle';
+        }
+
+        // Live metrics
+        document.getElementById('metricCpu').textContent = `${data.metrics.cpu_usage_percent.toFixed(1)}%`;
+        document.getElementById('metricCpuSub').textContent = `Target: ${data.target_cpu_percent.toFixed(0)}%`;
+
+        document.getElementById('metricMem').textContent = `${data.metrics.memory_rss_mb.toFixed(1)} MB`;
+        document.getElementById('metricMemSub').textContent = `${data.metrics.memory_usage_percent.toFixed(1)}% của ${memLimitMB} MB`;
+
+        document.getElementById('metricLimit').textContent = `${containerCpuLimit.toFixed(2)} vCPU`;
+        document.getElementById('metricLimitSub').textContent = `${memLimitMB} MB (${data.limits.cgroup_version})`;
+
+        // Timer badge
+        const timerBadge = document.getElementById('timerBadge');
+        if (data.is_active && data.remaining_seconds > 0) {
+          timerBadge.textContent = `Auto-stop: còn ${data.remaining_seconds}s`;
+          timerBadge.style.color = 'var(--warning)';
+        } else if (data.is_active) {
+          timerBadge.textContent = `Duy trì: Liên tục`;
+          timerBadge.style.color = 'var(--primary)';
+        } else {
+          timerBadge.textContent = `Timer: Tắt`;
+          timerBadge.style.color = 'var(--text-muted)';
+        }
+      } catch (err) {
+        console.error("Lỗi cập nhật metrics:", err);
+      }
+    }
+
+    async function applyLoad() {
+      const cpu = parseInt(cpuSlider.value) || 0;
+      const mem = parseInt(memSlider.value) || 0;
+
+      try {
+        const res = await fetch('/api/load', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            cpu_percent: cpu,
+            memory_percent: mem,
+            duration_seconds: selectedDuration
+          })
+        });
+        if (res.ok) {
+          showToast(`Đã áp dụng: CPU ${cpu}%, RAM ${mem}%`);
+          fetchStatus();
+        } else {
+          showToast('Lỗi áp dụng tải', true);
+        }
+      } catch (err) {
+        showToast('Không thể kết nối đến server', true);
+      }
+    }
+
+    async function stopLoad() {
+      try {
+        const res = await fetch('/api/stop', { method: 'POST' });
+        if (res.ok) {
+          updateCpuUI(0);
+          updateMemUI(0);
+          showToast('Đã dừng tải và giải phóng RAM');
+          fetchStatus();
+        } else {
+          showToast('Lỗi dừng tải', true);
+        }
+      } catch (err) {
+        showToast('Không thể kết nối đến server', true);
+      }
+    }
+
+    // Initial call & polling loop
+    fetchStatus();
+    setInterval(fetchStatus, 1500);
+  </script>
+</body>
+</html>
