@@ -11,11 +11,13 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime"
 	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -32,6 +34,55 @@ type SystemLimits struct {
 	HostMemory    uint64  `json:"host_memory_bytes"`
 }
 
+// parseProcSelfCgroup parses /proc/self/cgroup to get the relative cgroup path for v2 and v1 controllers.
+func parseProcSelfCgroup() map[string]string {
+	paths := make(map[string]string)
+	data, err := os.ReadFile("/proc/self/cgroup")
+	if err != nil {
+		return paths
+	}
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, ":", 3)
+		if len(parts) == 3 {
+			controllers := parts[1]
+			relPath := strings.TrimPrefix(parts[2], "/")
+			if controllers == "" {
+				// Cgroup v2 unified hierarchy
+				paths["v2"] = relPath
+			} else {
+				for _, ctrl := range strings.Split(controllers, ",") {
+					paths[ctrl] = relPath
+				}
+			}
+		}
+	}
+	return paths
+}
+
+// walkUpDirs generates directories starting from fullPath walking up to stopDir (inclusive).
+func walkUpDirs(fullPath, stopDir string) []string {
+	var dirs []string
+	curr := filepath.Clean(fullPath)
+	stop := filepath.Clean(stopDir)
+	for {
+		dirs = append(dirs, curr)
+		if curr == stop || curr == "/" || curr == "." {
+			break
+		}
+		parent := filepath.Dir(curr)
+		if parent == curr {
+			break
+		}
+		curr = parent
+	}
+	return dirs
+}
+
 func detectLimits() SystemLimits {
 	limits := SystemLimits{
 		CgroupVersion: "none",
@@ -40,29 +91,49 @@ func detectLimits() SystemLimits {
 
 	// Read host total memory from /proc/meminfo
 	limits.HostMemory = readMemInfoTotal()
+	cgroupPaths := parseProcSelfCgroup()
 
 	// 1. Detect Cgroup v2
 	if _, err := os.Stat("/sys/fs/cgroup/cgroup.controllers"); err == nil {
 		limits.CgroupVersion = "v2"
 
-		// CPU limit in v2: /sys/fs/cgroup/cpu.max ("quota period", e.g. "50000 100000")
-		if data, err := os.ReadFile("/sys/fs/cgroup/cpu.max"); err == nil {
-			parts := strings.Fields(string(data))
-			if len(parts) >= 2 && parts[0] != "max" {
-				quota, err1 := strconv.ParseFloat(parts[0], 64)
-				period, err2 := strconv.ParseFloat(parts[1], 64)
-				if err1 == nil && err2 == nil && period > 0 {
-					limits.CPULimit = quota / period
+		// Candidate paths to check for cpu.max and memory.max
+		var searchDirs []string
+		if v2Rel, ok := cgroupPaths["v2"]; ok && v2Rel != "" {
+			searchDirs = append(searchDirs, walkUpDirs(filepath.Join("/sys/fs/cgroup", v2Rel), "/sys/fs/cgroup")...)
+		}
+		searchDirs = append(searchDirs, "/sys/fs/cgroup")
+
+		// Search cpu.max
+		for _, dir := range searchDirs {
+			cpuMaxFile := filepath.Join(dir, "cpu.max")
+			if data, err := os.ReadFile(cpuMaxFile); err == nil {
+				parts := strings.Fields(string(data))
+				if len(parts) >= 2 && parts[0] != "max" {
+					quota, err1 := strconv.ParseFloat(parts[0], 64)
+					period, err2 := strconv.ParseFloat(parts[1], 64)
+					if err1 == nil && err2 == nil && quota > 0 && period > 0 {
+						limits.CPULimit = quota / period
+						log.Printf("[uet-cloud-test] Found cgroup v2 CPU quota in %s: quota=%.0f, period=%.0f => %.2f vCPUs",
+							cpuMaxFile, quota, period, limits.CPULimit)
+						break
+					}
 				}
 			}
 		}
 
-		// Memory limit in v2: /sys/fs/cgroup/memory.max
-		if data, err := os.ReadFile("/sys/fs/cgroup/memory.max"); err == nil {
-			str := strings.TrimSpace(string(data))
-			if str != "max" {
-				if val, err := strconv.ParseUint(str, 10, 64); err == nil {
-					limits.MemoryLimit = val
+		// Search memory.max
+		for _, dir := range searchDirs {
+			memMaxFile := filepath.Join(dir, "memory.max")
+			if data, err := os.ReadFile(memMaxFile); err == nil {
+				str := strings.TrimSpace(string(data))
+				if str != "max" && str != "" {
+					if val, err := strconv.ParseUint(str, 10, 64); err == nil && val > 0 {
+						limits.MemoryLimit = val
+						log.Printf("[uet-cloud-test] Found cgroup v2 Memory limit in %s: %d bytes (%.1f MB)",
+							memMaxFile, val, float64(val)/(1024*1024))
+						break
+					}
 				}
 			}
 		}
@@ -70,26 +141,72 @@ func detectLimits() SystemLimits {
 		// 2. Detect Cgroup v1
 		cgroupV1 := false
 
-		// CPU limit in v1: /sys/fs/cgroup/cpu/cpu.cfs_quota_us & cpu.cfs_period_us
-		quotaData, errQ := os.ReadFile("/sys/fs/cgroup/cpu/cpu.cfs_quota_us")
-		periodData, errP := os.ReadFile("/sys/fs/cgroup/cpu/cpu.cfs_period_us")
-		if errQ == nil && errP == nil {
-			cgroupV1 = true
-			quota, err1 := strconv.ParseFloat(strings.TrimSpace(string(quotaData)), 64)
-			period, err2 := strconv.ParseFloat(strings.TrimSpace(string(periodData)), 64)
-			if err1 == nil && err2 == nil && quota > 0 && period > 0 {
-				limits.CPULimit = quota / period
+		// Candidate directories for CPU controller in v1
+		cpuBaseDirs := []string{
+			"/sys/fs/cgroup/cpu,cpuacct",
+			"/sys/fs/cgroup/cpu",
+			"/sys/fs/cgroup/cpuacct,cpu",
+		}
+
+		var cpuSearchDirs []string
+		cpuRel := cgroupPaths["cpu"]
+		if cpuRel == "" {
+			cpuRel = cgroupPaths["cpu,cpuacct"]
+		}
+
+		for _, base := range cpuBaseDirs {
+			if _, err := os.Stat(base); err == nil {
+				cgroupV1 = true
+				if cpuRel != "" {
+					cpuSearchDirs = append(cpuSearchDirs, walkUpDirs(filepath.Join(base, cpuRel), base)...)
+				}
+				cpuSearchDirs = append(cpuSearchDirs, base)
 			}
 		}
 
-		// Memory limit in v1: /sys/fs/cgroup/memory/memory.limit_in_bytes
-		memData, errM := os.ReadFile("/sys/fs/cgroup/memory/memory.limit_in_bytes")
-		if errM == nil {
-			cgroupV1 = true
-			if val, err := strconv.ParseUint(strings.TrimSpace(string(memData)), 10, 64); err == nil {
-				// Cgroup v1 sets a huge number (like 0x7FFFFFFFFFFFF000) when unlimited
-				if val < 9000000000000000000 {
-					limits.MemoryLimit = val
+		for _, dir := range cpuSearchDirs {
+			qFile := filepath.Join(dir, "cpu.cfs_quota_us")
+			pFile := filepath.Join(dir, "cpu.cfs_period_us")
+			quotaData, errQ := os.ReadFile(qFile)
+			periodData, errP := os.ReadFile(pFile)
+			if errQ == nil && errP == nil {
+				quota, err1 := strconv.ParseFloat(strings.TrimSpace(string(quotaData)), 64)
+				period, err2 := strconv.ParseFloat(strings.TrimSpace(string(periodData)), 64)
+				if err1 == nil && err2 == nil && quota > 0 && period > 0 {
+					limits.CPULimit = quota / period
+					log.Printf("[uet-cloud-test] Found cgroup v1 CPU quota in %s: quota=%.0f, period=%.0f => %.2f vCPUs",
+						qFile, quota, period, limits.CPULimit)
+					break
+				}
+			}
+		}
+
+		// Candidate directories for Memory controller in v1
+		memBaseDirs := []string{
+			"/sys/fs/cgroup/memory",
+		}
+		var memSearchDirs []string
+		memRel := cgroupPaths["memory"]
+		for _, base := range memBaseDirs {
+			if _, err := os.Stat(base); err == nil {
+				cgroupV1 = true
+				if memRel != "" {
+					memSearchDirs = append(memSearchDirs, walkUpDirs(filepath.Join(base, memRel), base)...)
+				}
+				memSearchDirs = append(memSearchDirs, base)
+			}
+		}
+
+		for _, dir := range memSearchDirs {
+			mFile := filepath.Join(dir, "memory.limit_in_bytes")
+			if memData, err := os.ReadFile(mFile); err == nil {
+				if val, err := strconv.ParseUint(strings.TrimSpace(string(memData)), 10, 64); err == nil {
+					if val > 0 && val < 9000000000000000000 {
+						limits.MemoryLimit = val
+						log.Printf("[uet-cloud-test] Found cgroup v1 Memory limit in %s: %d bytes (%.1f MB)",
+							mFile, val, float64(val)/(1024*1024))
+						break
+					}
 				}
 			}
 		}
@@ -102,9 +219,11 @@ func detectLimits() SystemLimits {
 	// Fallback if unlimited or not set
 	if limits.CPULimit <= 0 {
 		limits.CPULimit = float64(limits.HostCPUs)
+		log.Printf("[uet-cloud-test] No cgroup CPU limit detected, fallback to Host CPUs: %d", limits.HostCPUs)
 	}
 	if limits.MemoryLimit == 0 {
 		limits.MemoryLimit = limits.HostMemory
+		log.Printf("[uet-cloud-test] No cgroup Memory limit detected, fallback to Host Memory: %d MB", limits.HostMemory/(1024*1024))
 	}
 
 	return limits
@@ -487,6 +606,308 @@ func runCPUWorker(ctx context.Context, dutyRatio float64) {
 	}
 }
 
+// --- HTTP Traffic Generator Engine ---
+
+type TrafficRequest struct {
+	TargetURL       string `json:"target_url"`
+	Concurrency     int    `json:"concurrency"`
+	DurationSeconds int    `json:"duration_seconds"`
+}
+
+type TrafficUpdateRequest struct {
+	Concurrency int `json:"concurrency"`
+}
+
+type TrafficStatus struct {
+	IsActive         bool    `json:"is_active"`
+	TargetURL        string  `json:"target_url"`
+	Concurrency      int     `json:"concurrency"`
+	ActiveWorkers    int32   `json:"active_workers"`
+	DurationSeconds  int     `json:"duration_seconds"`
+	ElapsedSeconds   int     `json:"elapsed_seconds"`
+	RemainingSeconds int     `json:"remaining_seconds"`
+	RPS              float64 `json:"rps"`
+	AvgLatencyMs     float64 `json:"avg_latency_ms"`
+	TotalRequests    int64   `json:"total_requests"`
+	Status2xx        int64   `json:"status_2xx"`
+	Status4xx        int64   `json:"status_4xx"`
+	Status5xx        int64   `json:"status_5xx"`
+	StatusErrors     int64   `json:"status_errors"`
+}
+
+type TrafficGenerator struct {
+	mu            sync.RWMutex
+	client        *http.Client
+	isActive      bool
+	targetURL     string
+	concurrency   int
+	targetWorkers int32
+	activeWorkers int32
+	durationSec   int
+	startTime     time.Time
+	ctx           context.Context
+	cancel        context.CancelFunc
+
+	totalRequests  int64
+	status2xx      int64
+	status4xx      int64
+	status5xx      int64
+	statusErrors   int64
+	totalLatencyNs int64
+
+	lastSampleTime   time.Time
+	lastSampleReqs   int64
+	lastSampleLatNs  int64
+	currentRPS       float64
+	currentLatencyMs float64
+}
+
+func newTrafficGenerator() *TrafficGenerator {
+	transport := &http.Transport{
+		MaxIdleConns:        2000,
+		MaxIdleConnsPerHost: 1000,
+		MaxConnsPerHost:     0,
+		IdleConnTimeout:     90 * time.Second,
+		DisableKeepAlives:   false,
+	}
+	client := &http.Client{
+		Transport: transport,
+		Timeout:   30 * time.Second,
+	}
+	tg := &TrafficGenerator{
+		client:         client,
+		lastSampleTime: time.Now(),
+	}
+	go tg.metricsLoop()
+	return tg
+}
+
+func (tg *TrafficGenerator) metricsLoop() {
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		tg.mu.Lock()
+		if !tg.isActive {
+			tg.currentRPS = 0
+			tg.mu.Unlock()
+			continue
+		}
+
+		now := time.Now()
+		elapsed := now.Sub(tg.lastSampleTime).Seconds()
+		if elapsed > 0 {
+			currReqs := atomic.LoadInt64(&tg.totalRequests)
+			currLatNs := atomic.LoadInt64(&tg.totalLatencyNs)
+
+			deltaReqs := currReqs - tg.lastSampleReqs
+			deltaLatNs := currLatNs - tg.lastSampleLatNs
+
+			tg.currentRPS = float64(deltaReqs) / elapsed
+			if deltaReqs > 0 {
+				tg.currentLatencyMs = float64(deltaLatNs) / float64(deltaReqs) / 1e6
+			}
+			tg.lastSampleReqs = currReqs
+			tg.lastSampleLatNs = currLatNs
+			tg.lastSampleTime = now
+		}
+
+		// Auto-stop if duration expired
+		if tg.durationSec > 0 && time.Since(tg.startTime) >= time.Duration(tg.durationSec)*time.Second {
+			tg.stopLocked()
+		}
+		tg.mu.Unlock()
+	}
+}
+
+func (tg *TrafficGenerator) Start(req TrafficRequest) error {
+	target := strings.TrimSpace(req.TargetURL)
+	if target == "" {
+		return fmt.Errorf("target_url is required")
+	}
+	if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
+		target = "http://" + target
+	}
+	if req.Concurrency <= 0 {
+		req.Concurrency = 10
+	}
+	if req.Concurrency > 2000 {
+		req.Concurrency = 2000
+	}
+
+	tg.mu.Lock()
+	defer tg.mu.Unlock()
+
+	if tg.isActive && tg.cancel != nil {
+		tg.cancel()
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	tg.ctx = ctx
+	tg.cancel = cancel
+	tg.isActive = true
+	tg.targetURL = target
+	tg.concurrency = req.Concurrency
+	tg.durationSec = req.DurationSeconds
+	tg.startTime = time.Now()
+	tg.lastSampleTime = time.Now()
+	tg.lastSampleReqs = 0
+	tg.lastSampleLatNs = 0
+	tg.currentRPS = 0
+	tg.currentLatencyMs = 0
+
+	atomic.StoreInt64(&tg.totalRequests, 0)
+	atomic.StoreInt64(&tg.status2xx, 0)
+	atomic.StoreInt64(&tg.status4xx, 0)
+	atomic.StoreInt64(&tg.status5xx, 0)
+	atomic.StoreInt64(&tg.statusErrors, 0)
+	atomic.StoreInt64(&tg.totalLatencyNs, 0)
+	atomic.StoreInt32(&tg.activeWorkers, 0)
+	atomic.StoreInt32(&tg.targetWorkers, int32(req.Concurrency))
+
+	for i := 0; i < req.Concurrency; i++ {
+		atomic.AddInt32(&tg.activeWorkers, 1)
+		go tg.runWorker(ctx, target)
+	}
+
+	log.Printf("[uet-cloud-test] Started HTTP traffic generator: Target=%s, Concurrency=%d, Duration=%ds",
+		target, req.Concurrency, req.DurationSeconds)
+	return nil
+}
+
+func (tg *TrafficGenerator) UpdateConcurrency(concurrency int) error {
+	if concurrency <= 0 {
+		concurrency = 1
+	}
+	if concurrency > 2000 {
+		concurrency = 2000
+	}
+
+	tg.mu.Lock()
+	defer tg.mu.Unlock()
+
+	if !tg.isActive {
+		return fmt.Errorf("traffic generator is not active")
+	}
+
+	prevTarget := atomic.LoadInt32(&tg.targetWorkers)
+	newTarget := int32(concurrency)
+	tg.concurrency = concurrency
+	atomic.StoreInt32(&tg.targetWorkers, newTarget)
+
+	if newTarget > prevTarget {
+		diff := int(newTarget - prevTarget)
+		for i := 0; i < diff; i++ {
+			atomic.AddInt32(&tg.activeWorkers, 1)
+			go tg.runWorker(tg.ctx, tg.targetURL)
+		}
+	}
+	log.Printf("[uet-cloud-test] Scaled HTTP traffic concurrency on-the-fly: %d -> %d", prevTarget, newTarget)
+	return nil
+}
+
+func (tg *TrafficGenerator) Stop() {
+	tg.mu.Lock()
+	defer tg.mu.Unlock()
+	tg.stopLocked()
+	log.Printf("[uet-cloud-test] Stopped HTTP traffic generator")
+}
+
+func (tg *TrafficGenerator) stopLocked() {
+	if !tg.isActive {
+		return
+	}
+	tg.isActive = false
+	if tg.cancel != nil {
+		tg.cancel()
+		tg.cancel = nil
+	}
+	atomic.StoreInt32(&tg.targetWorkers, 0)
+}
+
+func (tg *TrafficGenerator) runWorker(ctx context.Context, targetURL string) {
+	defer atomic.AddInt32(&tg.activeWorkers, -1)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		if atomic.LoadInt32(&tg.activeWorkers) > atomic.LoadInt32(&tg.targetWorkers) {
+			return
+		}
+
+		start := time.Now()
+		req, err := http.NewRequestWithContext(ctx, "GET", targetURL, nil)
+		if err != nil {
+			atomic.AddInt64(&tg.statusErrors, 1)
+			atomic.AddInt64(&tg.totalRequests, 1)
+			time.Sleep(50 * time.Millisecond)
+			continue
+		}
+		req.Header.Set("User-Agent", "uet-cloud-load-tester/1.0")
+
+		resp, err := tg.client.Do(req)
+		latency := time.Since(start)
+		atomic.AddInt64(&tg.totalLatencyNs, latency.Nanoseconds())
+		atomic.AddInt64(&tg.totalRequests, 1)
+
+		if err != nil {
+			atomic.AddInt64(&tg.statusErrors, 1)
+			time.Sleep(20 * time.Millisecond)
+			continue
+		}
+
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+
+		switch {
+		case resp.StatusCode >= 200 && resp.StatusCode < 300:
+			atomic.AddInt64(&tg.status2xx, 1)
+		case resp.StatusCode >= 400 && resp.StatusCode < 500:
+			atomic.AddInt64(&tg.status4xx, 1)
+		case resp.StatusCode >= 500:
+			atomic.AddInt64(&tg.status5xx, 1)
+		}
+	}
+}
+
+func (tg *TrafficGenerator) GetStatus() TrafficStatus {
+	tg.mu.RLock()
+	defer tg.mu.RUnlock()
+
+	elapsed := 0
+	remaining := 0
+	if tg.isActive {
+		elapsed = int(time.Since(tg.startTime).Seconds())
+		if tg.durationSec > 0 {
+			remaining = tg.durationSec - elapsed
+			if remaining < 0 {
+				remaining = 0
+			}
+		}
+	}
+
+	return TrafficStatus{
+		IsActive:         tg.isActive,
+		TargetURL:        tg.targetURL,
+		Concurrency:      tg.concurrency,
+		ActiveWorkers:    atomic.LoadInt32(&tg.activeWorkers),
+		DurationSeconds:  tg.durationSec,
+		ElapsedSeconds:   elapsed,
+		RemainingSeconds: remaining,
+		RPS:              tg.currentRPS,
+		AvgLatencyMs:     tg.currentLatencyMs,
+		TotalRequests:    atomic.LoadInt64(&tg.totalRequests),
+		Status2xx:        atomic.LoadInt64(&tg.status2xx),
+		Status4xx:        atomic.LoadInt64(&tg.status4xx),
+		Status5xx:        atomic.LoadInt64(&tg.status5xx),
+		StatusErrors:     atomic.LoadInt64(&tg.statusErrors),
+	}
+}
+
 // --- Main HTTP Server ---
 
 func main() {
@@ -502,6 +923,7 @@ func main() {
 
 	collector := newMetricsCollector(limits)
 	controller := newLoadController(limits, collector)
+	trafficGen := newTrafficGenerator()
 
 	mux := http.NewServeMux()
 
@@ -513,14 +935,14 @@ func main() {
 	fileServer := http.FileServer(http.FS(staticContent))
 	mux.Handle("/", fileServer)
 
-	// API Status
+	// API Status (Container Internal Load)
 	mux.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		status := controller.GetStatus()
 		json.NewEncoder(w).Encode(status)
 	})
 
-	// API Load
+	// API Load (Container Internal Load)
 	mux.HandleFunc("/api/load", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -544,7 +966,7 @@ func main() {
 		json.NewEncoder(w).Encode(controller.GetStatus())
 	})
 
-	// API Stop
+	// API Stop (Container Internal Load)
 	mux.HandleFunc("/api/stop", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -553,6 +975,71 @@ func main() {
 		controller.Stop()
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(controller.GetStatus())
+	})
+
+	// API Traffic Status
+	mux.HandleFunc("/api/traffic/status", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(trafficGen.GetStatus())
+	})
+
+	// API Traffic Start
+	mux.HandleFunc("/api/traffic/start", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var req TrafficRequest
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "Invalid body", http.StatusBadRequest)
+			return
+		}
+		if err := json.Unmarshal(body, &req); err != nil {
+			http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
+			return
+		}
+		if err := trafficGen.Start(req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(trafficGen.GetStatus())
+	})
+
+	// API Traffic Update (on-the-fly concurrency change)
+	mux.HandleFunc("/api/traffic/update", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var req TrafficUpdateRequest
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "Invalid body", http.StatusBadRequest)
+			return
+		}
+		if err := json.Unmarshal(body, &req); err != nil {
+			http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
+			return
+		}
+		if err := trafficGen.UpdateConcurrency(req.Concurrency); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(trafficGen.GetStatus())
+	})
+
+	// API Traffic Stop
+	mux.HandleFunc("/api/traffic/stop", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		trafficGen.Stop()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(trafficGen.GetStatus())
 	})
 
 	// Health check

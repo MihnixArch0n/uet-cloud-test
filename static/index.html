@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>UET Cloud - Container Load Tester</title>
+  <title>UET Cloud - Container & Traffic Load Tester</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -39,7 +39,7 @@
 
     .container {
       width: 100%;
-      max-width: 800px;
+      max-width: 860px;
       display: flex;
       flex-direction: column;
       gap: 1.5rem;
@@ -90,6 +90,52 @@
       border: 1px solid rgba(34, 197, 94, 0.3);
     }
 
+    /* Tabs */
+    .tabs {
+      display: flex;
+      gap: 0.5rem;
+      width: 100%;
+      border-bottom: 1px solid var(--card-border);
+      padding-bottom: 0.5rem;
+    }
+
+    .tab-btn {
+      background: transparent;
+      border: 1px solid transparent;
+      color: var(--text-muted);
+      padding: 0.6rem 1.1rem;
+      border-radius: 0.5rem;
+      font-size: 0.875rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      transition: all 0.2s;
+    }
+
+    .tab-btn:hover {
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .tab-btn.active {
+      color: var(--primary);
+      background: rgba(56, 189, 248, 0.12);
+      border-color: rgba(56, 189, 248, 0.3);
+    }
+
+    .tab-content {
+      display: none;
+      flex-direction: column;
+      gap: 1.5rem;
+      width: 100%;
+    }
+
+    .tab-content.active {
+      display: flex;
+    }
+
     .card {
       background-color: var(--card-bg);
       border: 1px solid var(--card-border);
@@ -110,7 +156,7 @@
     /* Metrics Grid */
     .metrics-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
       gap: 1rem;
     }
 
@@ -162,9 +208,9 @@
     }
 
     .control-display {
-      font-size: 0.95rem;
-      font-weight: 700;
+      font-family: monospace;
       color: var(--primary);
+      font-size: 0.95rem;
     }
 
     .slider-row {
@@ -173,25 +219,56 @@
       gap: 1rem;
     }
 
-    input[type="range"] {
+    input[type=range] {
       flex: 1;
-      height: 8px;
-      border-radius: 4px;
+      height: 6px;
+      border-radius: 3px;
       background: #334155;
       outline: none;
-      accent-color: var(--primary);
+      -webkit-appearance: none;
+      appearance: none;
+    }
+
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: var(--primary);
       cursor: pointer;
+      transition: transform 0.1s;
+    }
+
+    input[type=range]::-webkit-slider-thumb:hover {
+      transform: scale(1.15);
     }
 
     .number-input {
-      width: 90px;
-      padding: 0.4rem 0.5rem;
+      width: 80px;
       background: #0f172a;
       border: 1px solid var(--card-border);
+      color: var(--text);
+      padding: 0.4rem 0.6rem;
       border-radius: 0.375rem;
-      color: #fff;
-      font-size: 0.875rem;
+      font-size: 0.95rem;
       text-align: right;
+    }
+
+    .text-input {
+      background: #0f172a;
+      border: 1px solid var(--card-border);
+      color: var(--text);
+      padding: 0.65rem 0.85rem;
+      border-radius: 0.375rem;
+      font-size: 0.95rem;
+      width: 100%;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    .text-input:focus {
+      border-color: var(--primary);
     }
 
     .presets {
@@ -247,10 +324,12 @@
       display: flex;
       gap: 1rem;
       margin-top: 1rem;
+      flex-wrap: wrap;
     }
 
     .btn {
       flex: 1;
+      min-width: 160px;
       padding: 0.85rem 1.25rem;
       border: none;
       border-radius: 0.5rem;
@@ -282,6 +361,20 @@
       background: var(--danger-hover);
     }
 
+    .btn-warning {
+      background: var(--warning);
+      color: #0f172a;
+    }
+
+    .btn-warning:hover {
+      background: #d97706;
+    }
+
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
     /* Footer info */
     footer {
       font-size: 0.75rem;
@@ -302,6 +395,7 @@
       box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
       display: none;
       animation: fadeIn 0.3s;
+      z-index: 1000;
     }
 
     @keyframes fadeIn {
@@ -314,7 +408,7 @@
   <div class="container">
     <header>
       <div class="title-group">
-        <h1>UET Cloud - Load Tester</h1>
+        <h1>UET Cloud - Load &amp; Traffic Tester</h1>
         <p id="cgroupInfo">Đang nhận diện tài nguyên container...</p>
       </div>
       <div>
@@ -322,109 +416,236 @@
       </div>
     </header>
 
-    <!-- Metrics Card -->
-    <div class="card">
-      <div class="card-title">
-        <span>Chỉ số thời gian thực (Live Metrics)</span>
-        <span id="timerBadge" style="font-size: 0.8rem; font-weight: 400; color: var(--text-muted);">Timer: Tắt</span>
+    <!-- Navigation Tabs -->
+    <div class="tabs">
+      <button class="tab-btn active" id="tabBtnInternal" onclick="switchTab('internal')">
+        <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"/></svg>
+        Tải Container Nội Bộ (CPU/RAM)
+      </button>
+      <button class="tab-btn" id="tabBtnTraffic" onclick="switchTab('traffic')">
+        <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+        Bắn Tải HTTP (Domain / Azure Container Apps)
+      </button>
+    </div>
+
+    <!-- TAB 1: Internal Container Stress -->
+    <div id="tabContentInternal" class="tab-content active">
+      <!-- Metrics Card -->
+      <div class="card">
+        <div class="card-title">
+          <span>Chỉ số nội bộ container (Live Metrics)</span>
+          <span id="timerBadge" style="font-size: 0.8rem; font-weight: 400; color: var(--text-muted);">Timer: Tắt</span>
+        </div>
+        <div class="metrics-grid">
+          <div class="metric-box">
+            <span class="metric-label">CPU Sử dụng</span>
+            <span id="metricCpu" class="metric-value">0.0%</span>
+            <span id="metricCpuSub" class="metric-sub">Đang tính theo quota...</span>
+          </div>
+          <div class="metric-box">
+            <span class="metric-label">RAM Sử dụng (RSS)</span>
+            <span id="metricMem" class="metric-value">0.0 MB</span>
+            <span id="metricMemSub" class="metric-sub">0% của container limit</span>
+          </div>
+          <div class="metric-box">
+            <span class="metric-label">Giới hạn Cgroup</span>
+            <span id="metricLimit" class="metric-value">--</span>
+            <span id="metricLimitSub" class="metric-sub">Cgroup v2</span>
+          </div>
+        </div>
       </div>
-      <div class="metrics-grid">
-        <div class="metric-box">
-          <span class="metric-label">CPU Sử dụng</span>
-          <span id="metricCpu" class="metric-value">0.0%</span>
-          <span id="metricCpuSub" class="metric-sub">Đang tính theo quota...</span>
+
+      <!-- Control Card -->
+      <div class="card">
+        <div class="card-title">Điều khiển Tải Nội Bộ (Stress CPU / RAM)</div>
+
+        <!-- CPU Control -->
+        <div class="control-group">
+          <div class="control-header">
+            <label class="control-label" for="cpuSlider">Tải CPU (%)</label>
+            <span id="cpuDisplay" class="control-display">0% (~0.00 vCPU)</span>
+          </div>
+          <div class="slider-row">
+            <input type="range" id="cpuSlider" min="0" max="100" step="1" value="0">
+            <input type="number" id="cpuInput" class="number-input" min="0" max="100" step="1" value="0">
+            <span style="font-size: 0.85rem; color: var(--text-muted);">%</span>
+          </div>
+          <div class="presets">
+            <button class="preset-btn" onclick="setCpuPreset(0)">0%</button>
+            <button class="preset-btn" onclick="setCpuPreset(25)">25%</button>
+            <button class="preset-btn" onclick="setCpuPreset(50)">50%</button>
+            <button class="preset-btn" onclick="setCpuPreset(75)">75%</button>
+            <button class="preset-btn" onclick="setCpuPreset(90)">90%</button>
+            <button class="preset-btn" onclick="setCpuPreset(100)">100%</button>
+          </div>
         </div>
-        <div class="metric-box">
-          <span class="metric-label">RAM Sử dụng (RSS)</span>
-          <span id="metricMem" class="metric-value">0.0 MB</span>
-          <span id="metricMemSub" class="metric-sub">0% của container limit</span>
+
+        <!-- Memory Control -->
+        <div class="control-group">
+          <div class="control-header">
+            <label class="control-label" for="memSlider">Tải Memory / RAM (%)</label>
+            <span id="memDisplay" class="control-display">0% (~0 MB)</span>
+          </div>
+          <div class="slider-row">
+            <input type="range" id="memSlider" min="0" max="100" step="1" value="0">
+            <input type="number" id="memInput" class="number-input" min="0" max="100" step="1" value="0">
+            <span style="font-size: 0.85rem; color: var(--text-muted);">%</span>
+          </div>
+          <div class="presets">
+            <button class="preset-btn" onclick="setMemPreset(0)">0%</button>
+            <button class="preset-btn" onclick="setMemPreset(25)">25%</button>
+            <button class="preset-btn" onclick="setMemPreset(50)">50%</button>
+            <button class="preset-btn" onclick="setMemPreset(70)">70%</button>
+            <button class="preset-btn" onclick="setMemPreset(85)">85%</button>
+          </div>
         </div>
-        <div class="metric-box">
-          <span class="metric-label">Giới hạn Cgroup</span>
-          <span id="metricLimit" class="metric-value">--</span>
-          <span id="metricLimitSub" class="metric-sub">Cgroup v2</span>
+
+        <!-- Duration Selection -->
+        <div class="control-group">
+          <label class="control-label">Thời gian duy trì tải (Auto-stop Timer)</label>
+          <div class="duration-options">
+            <button class="duration-btn active" data-sec="0" onclick="setDuration(0, this)">Liên tục (Manual)</button>
+            <button class="duration-btn" data-sec="30" onclick="setDuration(30, this)">30 giây</button>
+            <button class="duration-btn" data-sec="60" onclick="setDuration(60, this)">1 phút</button>
+            <button class="duration-btn" data-sec="180" onclick="setDuration(180, this)">3 phút</button>
+            <button class="duration-btn" data-sec="300" onclick="setDuration(300, this)">5 phút</button>
+          </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="actions">
+          <button id="btnStart" class="btn btn-primary" onclick="applyLoad()">
+            <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20"><path d="M4 4l12 6-12 6V4z"/></svg>
+            Áp dụng Tải
+          </button>
+          <button id="btnStop" class="btn btn-danger" onclick="stopLoad()">
+            <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 001 1h4a1 1 0 001-1V8a1 1 0 00-1-1H8z" clip-rule="evenodd"/></svg>
+            Dừng &amp; Giải phóng RAM
+          </button>
         </div>
       </div>
     </div>
 
-    <!-- Control Card -->
-    <div class="card">
-      <div class="card-title">Điều khiển Tải (Load Controller)</div>
-
-      <!-- CPU Control -->
-      <div class="control-group">
-        <div class="control-header">
-          <label class="control-label" for="cpuSlider">Tải CPU (%)</label>
-          <span id="cpuDisplay" class="control-display">0% (~0.00 vCPU)</span>
+    <!-- TAB 2: HTTP Traffic Generator -->
+    <div id="tabContentTraffic" class="tab-content">
+      <!-- Traffic Live Metrics Card -->
+      <div class="card">
+        <div class="card-title">
+          <span>Thống kê Bắn Tải HTTP (Real-time Telemetry)</span>
+          <span id="trafficTimerBadge" style="font-size: 0.8rem; font-weight: 400; color: var(--text-muted);">Trạng thái: Chưa bắn</span>
         </div>
-        <div class="slider-row">
-          <input type="range" id="cpuSlider" min="0" max="100" step="1" value="0">
-          <input type="number" id="cpuInput" class="number-input" min="0" max="100" step="1" value="0">
-          <span style="font-size: 0.85rem; color: var(--text-muted);">%</span>
-        </div>
-        <div class="presets">
-          <button class="preset-btn" onclick="setCpuPreset(0)">0%</button>
-          <button class="preset-btn" onclick="setCpuPreset(25)">25%</button>
-          <button class="preset-btn" onclick="setCpuPreset(50)">50%</button>
-          <button class="preset-btn" onclick="setCpuPreset(75)">75%</button>
-          <button class="preset-btn" onclick="setCpuPreset(90)">90%</button>
-          <button class="preset-btn" onclick="setCpuPreset(100)">100%</button>
-        </div>
-      </div>
-
-      <!-- Memory Control -->
-      <div class="control-group">
-        <div class="control-header">
-          <label class="control-label" for="memSlider">Tải Memory / RAM (%)</label>
-          <span id="memDisplay" class="control-display">0% (~0 MB)</span>
-        </div>
-        <div class="slider-row">
-          <input type="range" id="memSlider" min="0" max="100" step="1" value="0">
-          <input type="number" id="memInput" class="number-input" min="0" max="100" step="1" value="0">
-          <span style="font-size: 0.85rem; color: var(--text-muted);">%</span>
-        </div>
-        <div class="presets">
-          <button class="preset-btn" onclick="setMemPreset(0)">0%</button>
-          <button class="preset-btn" onclick="setMemPreset(25)">25%</button>
-          <button class="preset-btn" onclick="setMemPreset(50)">50%</button>
-          <button class="preset-btn" onclick="setMemPreset(70)">70%</button>
-          <button class="preset-btn" onclick="setMemPreset(85)">85%</button>
+        <div class="metrics-grid">
+          <div class="metric-box">
+            <span class="metric-label">Concurrent Requests</span>
+            <span id="metricTrafficWorkers" class="metric-value">0</span>
+            <span id="metricTrafficTarget" class="metric-sub">Target: 0 đồng thời</span>
+          </div>
+          <div class="metric-box">
+            <span class="metric-label">Throughput (RPS)</span>
+            <span id="metricTrafficRPS" class="metric-value">0.0</span>
+            <span class="metric-sub">Requests / giây</span>
+          </div>
+          <div class="metric-box">
+            <span class="metric-label">Latency Trung Bình</span>
+            <span id="metricTrafficLatency" class="metric-value">0.0 ms</span>
+            <span class="metric-sub">Thời gian phản hồi</span>
+          </div>
+          <div class="metric-box">
+            <span class="metric-label">Tổng Request &amp; Status</span>
+            <span id="metricTrafficTotal" class="metric-value">0</span>
+            <span id="metricTrafficStatus" class="metric-sub">2xx: 0 | 4xx: 0 | 5xx: 0</span>
+          </div>
         </div>
       </div>
 
-      <!-- Duration Selection -->
-      <div class="control-group">
-        <label class="control-label">Thời gian duy trì tải (Auto-stop Timer)</label>
-        <div class="duration-options">
-          <button class="duration-btn active" data-sec="0" onclick="setDuration(0, this)">Liên tục (Manual)</button>
-          <button class="duration-btn" data-sec="30" onclick="setDuration(30, this)">30 giây</button>
-          <button class="duration-btn" data-sec="60" onclick="setDuration(60, this)">1 phút</button>
-          <button class="duration-btn" data-sec="180" onclick="setDuration(180, this)">3 phút</button>
-          <button class="duration-btn" data-sec="300" onclick="setDuration(300, this)">5 phút</button>
-        </div>
-      </div>
+      <!-- Traffic Control Card -->
+      <div class="card">
+        <div class="card-title">Cấu hình Bắn Tải HTTP (HTTP Concurrency Controller)</div>
 
-      <!-- Actions -->
-      <div class="actions">
-        <button id="btnStart" class="btn btn-primary" onclick="applyLoad()">
-          <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20"><path d="M4 4l12 6-12 6V4z"/></svg>
-          Áp dụng Tải
-        </button>
-        <button id="btnStop" class="btn btn-danger" onclick="stopLoad()">
-          <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 001 1h4a1 1 0 001-1V8a1 1 0 00-1-1H8z" clip-rule="evenodd"/></svg>
-          Dừng & Giải phóng RAM
-        </button>
+        <!-- Target Domain / URL -->
+        <div class="control-group">
+          <div class="control-header">
+            <label class="control-label" for="trafficUrl">Target Domain / URL</label>
+            <span class="control-display" style="font-size: 0.8rem; color: var(--text-muted);">Lưu tự động vào cache</span>
+          </div>
+          <input type="text" id="trafficUrl" class="text-input" placeholder="https://<your-app>.<region>.azurecontainerapps.io/api/status">
+        </div>
+
+        <!-- Concurrency Slider -->
+        <div class="control-group">
+          <div class="control-header">
+            <label class="control-label" for="trafficConcurrencySlider">Số lượng Concurrent Requests (Đồng thời)</label>
+            <span id="trafficConcurrencyDisplay" class="control-display">10 đồng thời</span>
+          </div>
+          <div class="slider-row">
+            <input type="range" id="trafficConcurrencySlider" min="1" max="500" step="1" value="10">
+            <input type="number" id="trafficConcurrencyInput" class="number-input" min="1" max="2000" step="1" value="10">
+            <span style="font-size: 0.85rem; color: var(--text-muted);">conn</span>
+          </div>
+          <div class="presets">
+            <button class="preset-btn" onclick="setConcurrencyPreset(1)">1 (Baseline)</button>
+            <button class="preset-btn" onclick="setConcurrencyPreset(10)">10 (ACA Default)</button>
+            <button class="preset-btn" onclick="setConcurrencyPreset(20)">20</button>
+            <button class="preset-btn" onclick="setConcurrencyPreset(50)">50 (Scale-up)</button>
+            <button class="preset-btn" onclick="setConcurrencyPreset(100)">100</button>
+            <button class="preset-btn" onclick="setConcurrencyPreset(200)">200 (Stress)</button>
+            <button class="preset-btn" onclick="setConcurrencyPreset(500)">500</button>
+          </div>
+        </div>
+
+        <!-- Duration Selection for Traffic -->
+        <div class="control-group">
+          <label class="control-label">Thời gian bắn tải (Duration)</label>
+          <div class="duration-options">
+            <button class="duration-btn active" data-traffic-sec="0" onclick="setTrafficDuration(0, this)">Liên tục (Bấm dừng tay)</button>
+            <button class="duration-btn" data-traffic-sec="30" onclick="setTrafficDuration(30, this)">30 giây</button>
+            <button class="duration-btn" data-traffic-sec="60" onclick="setTrafficDuration(60, this)">1 phút</button>
+            <button class="duration-btn" data-traffic-sec="180" onclick="setTrafficDuration(180, this)">3 phút</button>
+            <button class="duration-btn" data-traffic-sec="300" onclick="setTrafficDuration(300, this)">5 phút</button>
+          </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="actions">
+          <button id="btnStartTraffic" class="btn btn-primary" onclick="startTraffic()">
+            <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20"><path d="M4 4l12 6-12 6V4z"/></svg>
+            Bắt đầu Bắn Tải
+          </button>
+          <button id="btnUpdateTraffic" class="btn btn-warning" onclick="updateTrafficConcurrency()" style="display: none;">
+            <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"/></svg>
+            Cập nhật Tải Ngay (On-The-Fly)
+          </button>
+          <button id="btnStopTraffic" class="btn btn-danger" onclick="stopTraffic()" disabled>
+            <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 001 1h4a1 1 0 001-1V8a1 1 0 00-1-1H8z" clip-rule="evenodd"/></svg>
+            Dừng Bắn Tải
+          </button>
+        </div>
       </div>
     </div>
 
     <footer>
-      UET Cloud • Container Performance Load Engine • Tương thích Azure Container Apps (ACA)
+      UET Cloud • Container &amp; HTTP Traffic Load Engine • Hỗ trợ Azure Container Apps (ACA) Scaling Rules
     </footer>
   </div>
 
   <div id="toast" class="toast"></div>
 
   <script>
+    // Tab Navigation
+    function switchTab(tab) {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+
+      if (tab === 'internal') {
+        document.getElementById('tabBtnInternal').classList.add('active');
+        document.getElementById('tabContentInternal').classList.add('active');
+      } else {
+        document.getElementById('tabBtnTraffic').classList.add('active');
+        document.getElementById('tabContentTraffic').classList.add('active');
+      }
+    }
+
+    // --- Tab 1: Internal Container Stress Logic ---
     let containerCpuLimit = 1.0;
     let containerMemBytes = 1024 * 1024 * 1024;
     let selectedDuration = 0;
@@ -464,7 +685,7 @@
 
     function setDuration(sec, btn) {
       selectedDuration = sec;
-      document.querySelectorAll('.duration-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('#tabContentInternal .duration-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
     }
 
@@ -476,13 +697,12 @@
       setTimeout(() => { toast.style.display = 'none'; }, 3000);
     }
 
-    async function fetchStatus() {
+    async function fetchInternalStatus() {
       try {
         const res = await fetch('/api/status');
         if (!res.ok) return;
         const data = await res.json();
 
-        // Update limits once detected
         containerCpuLimit = data.limits.cpu_limit;
         containerMemBytes = data.limits.memory_limit_bytes;
 
@@ -490,17 +710,16 @@
         document.getElementById('cgroupInfo').textContent = 
           `Cgroup: ${data.limits.cgroup_version.toUpperCase()} | Giới hạn: ${containerCpuLimit.toFixed(2)} vCPU, ${memLimitMB} MB RAM`;
 
-        // Update status badge
+        // Update status badge if on internal
         const badge = document.getElementById('statusBadge');
         if (data.is_active) {
           badge.className = 'badge badge-active';
-          badge.textContent = '● Đang chạy tải';
-        } else {
+          badge.textContent = '● Đang tải nội bộ';
+        } else if (!isTrafficActive) {
           badge.className = 'badge badge-idle';
           badge.textContent = '● Idle';
         }
 
-        // Live metrics
         document.getElementById('metricCpu').textContent = `${data.metrics.cpu_usage_percent.toFixed(1)}%`;
         document.getElementById('metricCpuSub').textContent = `Target: ${data.target_cpu_percent.toFixed(0)}%`;
 
@@ -510,7 +729,6 @@
         document.getElementById('metricLimit').textContent = `${containerCpuLimit.toFixed(2)} vCPU`;
         document.getElementById('metricLimitSub').textContent = `${memLimitMB} MB (${data.limits.cgroup_version})`;
 
-        // Timer badge
         const timerBadge = document.getElementById('timerBadge');
         if (data.is_active && data.remaining_seconds > 0) {
           timerBadge.textContent = `Auto-stop: còn ${data.remaining_seconds}s`;
@@ -522,9 +740,7 @@
           timerBadge.textContent = `Timer: Tắt`;
           timerBadge.style.color = 'var(--text-muted)';
         }
-      } catch (err) {
-        console.error("Lỗi cập nhật metrics:", err);
-      }
+      } catch (err) {}
     }
 
     async function applyLoad() {
@@ -542,10 +758,10 @@
           })
         });
         if (res.ok) {
-          showToast(`Đã áp dụng: CPU ${cpu}%, RAM ${mem}%`);
-          fetchStatus();
+          showToast(`Đã áp dụng tải nội bộ: CPU ${cpu}%, RAM ${mem}%`);
+          fetchInternalStatus();
         } else {
-          showToast('Lỗi áp dụng tải', true);
+          showToast('Lỗi áp dụng tải nội bộ', true);
         }
       } catch (err) {
         showToast('Không thể kết nối đến server', true);
@@ -559,7 +775,7 @@
           updateCpuUI(0);
           updateMemUI(0);
           showToast('Đã dừng tải và giải phóng RAM');
-          fetchStatus();
+          fetchInternalStatus();
         } else {
           showToast('Lỗi dừng tải', true);
         }
@@ -568,9 +784,182 @@
       }
     }
 
-    // Initial call & polling loop
-    fetchStatus();
-    setInterval(fetchStatus, 1500);
+    // --- Tab 2: HTTP Traffic Generator Logic ---
+    let isTrafficActive = false;
+    let selectedTrafficDuration = 0;
+    const trafficUrlInput = document.getElementById('trafficUrl');
+    const trafficConcurrencySlider = document.getElementById('trafficConcurrencySlider');
+    const trafficConcurrencyInput = document.getElementById('trafficConcurrencyInput');
+    const trafficConcurrencyDisplay = document.getElementById('trafficConcurrencyDisplay');
+    const btnStartTraffic = document.getElementById('btnStartTraffic');
+    const btnUpdateTraffic = document.getElementById('btnUpdateTraffic');
+    const btnStopTraffic = document.getElementById('btnStopTraffic');
+
+    // Restore cached URL from localStorage
+    const savedUrl = localStorage.getItem('uet_traffic_url');
+    if (savedUrl) {
+      trafficUrlInput.value = savedUrl;
+    }
+    trafficUrlInput.addEventListener('change', (e) => {
+      localStorage.setItem('uet_traffic_url', e.target.value.trim());
+    });
+
+    function updateTrafficConcurrencyUI(val) {
+      val = Math.max(1, parseInt(val) || 1);
+      trafficConcurrencySlider.value = val;
+      trafficConcurrencyInput.value = val;
+      trafficConcurrencyDisplay.textContent = `${val} đồng thời`;
+
+      if (isTrafficActive) {
+        btnUpdateTraffic.style.display = 'inline-flex';
+      }
+    }
+
+    trafficConcurrencySlider.addEventListener('input', (e) => updateTrafficConcurrencyUI(e.target.value));
+    trafficConcurrencyInput.addEventListener('input', (e) => updateTrafficConcurrencyUI(e.target.value));
+
+    function setConcurrencyPreset(val) {
+      updateTrafficConcurrencyUI(val);
+      if (isTrafficActive) {
+        updateTrafficConcurrency();
+      }
+    }
+
+    function setTrafficDuration(sec, btn) {
+      selectedTrafficDuration = sec;
+      document.querySelectorAll('#tabContentTraffic .duration-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    }
+
+    async function startTraffic() {
+      const url = trafficUrlInput.value.trim();
+      if (!url) {
+        showToast('Vui lòng nhập Target Domain hoặc URL!', true);
+        trafficUrlInput.focus();
+        return;
+      }
+      localStorage.setItem('uet_traffic_url', url);
+      const concurrency = parseInt(trafficConcurrencySlider.value) || 10;
+
+      try {
+        const res = await fetch('/api/traffic/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            target_url: url,
+            concurrency: concurrency,
+            duration_seconds: selectedTrafficDuration
+          })
+        });
+
+        if (res.ok) {
+          showToast(`Bắt đầu bắn tải: ${concurrency} concurrent requests tới ${url}`);
+          isTrafficActive = true;
+          btnStartTraffic.disabled = true;
+          btnStopTraffic.disabled = false;
+          btnUpdateTraffic.style.display = 'none';
+          fetchTrafficStatus();
+        } else {
+          const errText = await res.text();
+          showToast(`Lỗi: ${errText}`, true);
+        }
+      } catch (err) {
+        showToast('Không thể kết nối đến server bắn tải', true);
+      }
+    }
+
+    async function updateTrafficConcurrency() {
+      const concurrency = parseInt(trafficConcurrencySlider.value) || 10;
+      try {
+        const res = await fetch('/api/traffic/update', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ concurrency: concurrency })
+        });
+        if (res.ok) {
+          showToast(`Đã cập nhật mức tải sang ${concurrency} concurrent requests on-the-fly!`);
+          btnUpdateTraffic.style.display = 'none';
+          fetchTrafficStatus();
+        } else {
+          const err = await res.text();
+          showToast(`Lỗi cập nhật: ${err}`, true);
+        }
+      } catch (err) {
+        showToast('Lỗi gửi cập nhật tải', true);
+      }
+    }
+
+    async function stopTraffic() {
+      try {
+        const res = await fetch('/api/traffic/stop', { method: 'POST' });
+        if (res.ok) {
+          showToast('Đã dừng bắn tải HTTP');
+          isTrafficActive = false;
+          btnStartTraffic.disabled = false;
+          btnStopTraffic.disabled = true;
+          btnUpdateTraffic.style.display = 'none';
+          fetchTrafficStatus();
+        } else {
+          showToast('Lỗi dừng bắn tải', true);
+        }
+      } catch (err) {
+        showToast('Lỗi kết nối khi dừng tải', true);
+      }
+    }
+
+    async function fetchTrafficStatus() {
+      try {
+        const res = await fetch('/api/traffic/status');
+        if (!res.ok) return;
+        const data = await res.json();
+
+        isTrafficActive = data.is_active;
+        btnStartTraffic.disabled = isTrafficActive;
+        btnStopTraffic.disabled = !isTrafficActive;
+
+        const badge = document.getElementById('statusBadge');
+        const timerBadge = document.getElementById('trafficTimerBadge');
+
+        if (isTrafficActive) {
+          badge.className = 'badge badge-active';
+          badge.textContent = `● Bắn tải (${data.active_workers} conn)`;
+
+          if (data.duration_seconds > 0 && data.remaining_seconds > 0) {
+            timerBadge.textContent = `Đang bắn: còn ${data.remaining_seconds}s (hết ${data.elapsed_seconds}s)`;
+            timerBadge.style.color = 'var(--warning)';
+          } else {
+            timerBadge.textContent = `Đang bắn liên tục (${data.elapsed_seconds}s)`;
+            timerBadge.style.color = 'var(--success)';
+          }
+        } else {
+          if (!document.getElementById('statusBadge').textContent.includes('nội bộ')) {
+            badge.className = 'badge badge-idle';
+            badge.textContent = '● Idle';
+          }
+          timerBadge.textContent = 'Trạng thái: Chưa bắn';
+          timerBadge.style.color = 'var(--text-muted)';
+          btnUpdateTraffic.style.display = 'none';
+        }
+
+        document.getElementById('metricTrafficWorkers').textContent = data.active_workers;
+        document.getElementById('metricTrafficTarget').textContent = `Target: ${data.concurrency} đồng thời`;
+
+        document.getElementById('metricTrafficRPS').textContent = data.rps.toFixed(1);
+        document.getElementById('metricTrafficLatency').textContent = `${data.avg_latency_ms.toFixed(1)} ms`;
+
+        document.getElementById('metricTrafficTotal').textContent = data.total_requests.toLocaleString();
+        document.getElementById('metricTrafficStatus').textContent = 
+          `2xx: ${data.status_2xx} | 4xx: ${data.status_4xx} | 5xx: ${data.status_5xx} | Err: ${data.status_errors}`;
+      } catch (err) {}
+    }
+
+    // Polling Loop
+    fetchInternalStatus();
+    fetchTrafficStatus();
+    setInterval(() => {
+      fetchInternalStatus();
+      fetchTrafficStatus();
+    }, 1500);
   </script>
 </body>
 </html>
